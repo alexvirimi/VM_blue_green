@@ -24,9 +24,21 @@ ansible/
 ```
 
 ## Requisitos previos
-- Una máquina virtual AWS EC2 (Ubuntu preferiblemente).
-- Llave SSH de la máquina virtual.
-- Salida a internet de la máquina virtual.
+
+**Máquina de control**
+- Linux, macOS o WSL con Ansible instalado (paso 1).
+- Colección `community.docker` (`ansible-galaxy collection install -r requirements.yml` en el paso 1).
+
+**Máquina virtual (creada con Terraform)**
+- AWS EC2 con Ubuntu 22.04 (los roles usan `apt`) y usuario `ubuntu`.
+- Security Group: puerto 22 abierto desde su IP y puerto 80 público.
+- Salida a internet por el puerto 443 (paquetes e imágenes).
+- Rol IAM con permiso de pull en ECR (para el despliegue real).
+
+**Acceso**
+- Llave SSH del key pair de la VM, con permisos `400`.
+- IP pública de la VM.
+- Para el despliegue real: URL del repositorio ECR y tag de una imagen ya publicada.
 
 ## Instrucciones de uso
 
