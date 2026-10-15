@@ -1,0 +1,303 @@
+# CI/CD de INFRAESTRUCTURA - Terraform (IaC)
+# Filtro de paths (req. 4 del taller): este workflow SOLO se ejecuta cuando
+# cambian archivos de infraestructura (terraform/**) o este mismo workflow.
+
+name: Infra CI/CD (Terraform)
+
+on:
+  push:
+    branches: [main]
+    paths: ["terraform/**", ".github/workflows/infra.yml"]
+  pull_request:
+    branches: [main]
+    paths: ["terraform/**", ".github/workflows/infra.yml"]
+  workflow_dispatch:
+    inputs:
+      skip_apply:
+        description: "Ejecutar solo terraform plan (sin apply)"
+        type: boolean
+        default: false
+
+# Endurecimiento: token sin permisos por defecto; cada job pide solo el minimo.
+permissions: {}
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  TF_IN_AUTOMATION: "true"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Validaciones: se ejecutan SIEMPRE (PR y push a main). No usan credenciales.
+  # ---------------------------------------------------------------------------
+  validate:
+    name: Validaciones (fmt, validate, Checkov)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configurar Terraform (version fija para reproducibilidad)
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.11.4
+          terraform_wrapper: false
+
+      # Control de seguridad (req. 7): formato estandar del codigo Terraform.
+      - name: terraform fmt -check
+        run: terraform fmt -check -recursive
+
+      - name: terraform init (sin backend) y validate
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+      # Control de seguridad (req. 7): analisis estatico de la infraestructura
+      # con Checkov. Falla el pipeline si hay hallazgos.
+      #
+      # Cada check en SKIP_CHECKS es una desviacion DELIBERADA del diseño y debe
+      # estar justificada en el "Registro de decisiones" del README:
+      #   CKV_AWS_88  - IP publica en la EC2  (la app debe ser accesible por HTTP,
+      #                                       requisito del taller, sin balanceador).
+      #   CKV_AWS_260 - SG puerto 80 abierto  (acceso publico a la aplicacion).
+      #   CKV_AWS_24  - SG puerto 22 abierto   (canal SSH desde GitHub Actions,
+      #                                       decision del equipo; ver README).
+      - name: Checkov - analisis estatico de la infraestructura
+        run: |
+          pip install --quiet checkov
+          SKIP_CHECKS="CKV_AWS_88,CKV_AWS_260,CKV_AWS_24"
+          checkov -d . --framework terraform --compact --skip-check "$SKIP_CHECKS"
+
+      - name: Resumen del job (evidencias)
+        run: |
+          {
+            echo "### Infra - Validaciones de infraestructura"
+            echo ""
+            echo "- terraform fmt -check: OK :white_check_mark:"
+            echo "- terraform validate: OK :white_check_mark:"
+            echo "- Checkov: sin hallazgos (excluye skips justificados) :white_check_mark:"
+            echo "- Checks excluidos por decision de diseno: CKV_AWS_88 (IP publica), CKV_AWS_260 (HTTP publico), CKV_AWS_24 (SSH publico)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Plan: solo en main (necesita leer el estado remoto via OIDC).
+  # ---------------------------------------------------------------------------
+  plan:
+    name: Terraform plan (estado remoto)
+    needs: validate
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # OIDC: asumir rol sin claves almacenadas (req. 8).
+    defaults:
+      run:
+        working-directory: terraform
+    concurrency:
+      group: terraform-plan
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configurar Terraform (version fija para reproducibilidad)
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.11.4
+          terraform_wrapper: false
+
+      - name: Verificar variables requeridas del repositorio
+        env:
+          TF_ROLE_ARN: ${{ vars.TF_ROLE_ARN }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: |
+          set -euo pipefail
+          faltan=""
+          [ -n "$AWS_REGION" ]      || faltan="$faltan AWS_REGION"
+          [ -n "$TF_ROLE_ARN" ]    || faltan="$faltan TF_ROLE_ARN"
+          [ -n "$TF_STATE_BUCKET" ] || faltan="$faltan TF_STATE_BUCKET"
+          if [ -n "$faltan" ]; then
+            echo "::error::Faltan variables del repositorio:$faltan. Configuralas en Settings > Secrets and variables > Actions > Variables."
+            exit 1
+          fi
+
+      # Autenticacion federada con AWS: sin claves de acceso en el repositorio.
+      - name: Configurar credenciales AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.TF_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Generar terraform.tfvars desde variables del repositorio
+        env:
+          EC2_KEY_NAME: ${{ vars.EC2_KEY_NAME }}
+          SSH_ALLOWED_CIDR: ${{ vars.SSH_ALLOWED_CIDR }}
+          OIDC_PROVIDER_ARN: ${{ vars.OIDC_PROVIDER_ARN }}
+        run: |
+          set -euo pipefail
+          : > terraform.tfvars
+          escribir() {
+            local tf_var="$1" valor="$2" repo_var="$3"
+            if [ -z "$valor" ]; then
+              echo "::error::Falta la variable de repositorio ${repo_var} (Settings > Secrets and variables > Actions > Variables)."
+              exit 1
+            fi
+            printf '%s = "%s"\n' "$tf_var" "$valor" >> terraform.tfvars
+          }
+          escribir key_name "$EC2_KEY_NAME" EC2_KEY_NAME
+          escribir ssh_allowed_cidr "$SSH_ALLOWED_CIDR" SSH_ALLOWED_CIDR
+          # Opcional: solo si el proveedor OIDC ya existe en la cuenta AWS.
+          if [ -n "$OIDC_PROVIDER_ARN" ]; then
+            printf 'github_oidc_provider_arn = "%s"\n' "$OIDC_PROVIDER_ARN" >> terraform.tfvars
+          fi
+          echo "--- terraform.tfvars generado en CI (no se versiona; ver .gitignore) ---"
+          cat terraform.tfvars
+
+      - name: terraform init (backend S3 con lockfile)
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+        run: |
+          set -euo pipefail
+          terraform init -input=false -lock-timeout=5m \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${TF_STATE_KEY:-vm-blue-green/terraform.tfstate}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true" \
+            -backend-config="use_lockfile=true"
+
+      - name: terraform plan
+        run: terraform plan -input=false -no-color -lock-timeout=5m
+
+  # ---------------------------------------------------------------------------
+  # Apply: solo en push a main (req. 6: "un cambio en la infraestructura debera
+  # ejecutar validaciones y aplicar los cambios mediante Terraform").
+  # ---------------------------------------------------------------------------
+  apply:
+    name: Terraform apply (auto-aplicado)
+    needs: plan
+    if: inputs.skip_apply != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write # OIDC para AWS.
+      actions: write   # Solo para actualizar la variable VM_PUBLIC_IP tras el apply.
+    defaults:
+      run:
+        working-directory: terraform
+    concurrency:
+      group: terraform-apply
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configurar Terraform (version fija para reproducibilidad)
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.11.4
+          terraform_wrapper: false
+
+      - name: Verificar variables requeridas del repositorio
+        env:
+          TF_ROLE_ARN: ${{ vars.TF_ROLE_ARN }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: |
+          set -euo pipefail
+          faltan=""
+          [ -n "$AWS_REGION" ]      || faltan="$faltan AWS_REGION"
+          [ -n "$TF_ROLE_ARN" ]    || faltan="$faltan TF_ROLE_ARN"
+          [ -n "$TF_STATE_BUCKET" ] || faltan="$faltan TF_STATE_BUCKET"
+          if [ -n "$faltan" ]; then
+            echo "::error::Faltan variables del repositorio:$faltan. Configuralas en Settings > Secrets and variables > Actions > Variables."
+            exit 1
+          fi
+
+      - name: Configurar credenciales AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.TF_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Generar terraform.tfvars desde variables del repositorio
+        env:
+          EC2_KEY_NAME: ${{ vars.EC2_KEY_NAME }}
+          SSH_ALLOWED_CIDR: ${{ vars.SSH_ALLOWED_CIDR }}
+          OIDC_PROVIDER_ARN: ${{ vars.OIDC_PROVIDER_ARN }}
+        run: |
+          set -euo pipefail
+          : > terraform.tfvars
+          escribir() {
+            local tf_var="$1" valor="$2" repo_var="$3"
+            if [ -z "$valor" ]; then
+              echo "::error::Falta la variable de repositorio ${repo_var} (Settings > Secrets and variables > Actions > Variables)."
+              exit 1
+            fi
+            printf '%s = "%s"\n' "$tf_var" "$valor" >> terraform.tfvars
+          }
+          escribir key_name "$EC2_KEY_NAME" EC2_KEY_NAME
+          escribir ssh_allowed_cidr "$SSH_ALLOWED_CIDR" SSH_ALLOWED_CIDR
+          if [ -n "$OIDC_PROVIDER_ARN" ]; then
+            printf 'github_oidc_provider_arn = "%s"\n' "$OIDC_PROVIDER_ARN" >> terraform.tfvars
+          fi
+          echo "--- terraform.tfvars generado en CI (no se versiona; ver .gitignore) ---"
+          cat terraform.tfvars
+
+      - name: terraform init (backend S3 con lockfile)
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+        run: |
+          set -euo pipefail
+          terraform init -input=false -lock-timeout=5m \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=${TF_STATE_KEY:-vm-blue-green/terraform.tfstate}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true" \
+            -backend-config="use_lockfile=true"
+
+      - name: terraform apply
+        run: terraform apply -input=false -no-color -auto-approve -lock-timeout=5m
+
+      - name: Publicar outputs (evidencias)
+        run: |
+          {
+            echo "### Infra - terraform apply completado"
+            echo ""
+            echo '```text'
+            terraform output
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Publica la IP de la VM como variable del repositorio para que los
+      # workflows de app/config la usen en sus pasos de SSH. Si el token no
+      # tiene permisos suficientes, el fallback manual esta documentado en el
+      # README ("Actualizar VM_PUBLIC_IP a mano").
+      - name: Actualizar la variable VM_PUBLIC_IP del repositorio
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          IP="$(terraform output -raw vm_public_ip)"
+          if [ -z "$IP" ]; then
+            echo "::error::El output vm_public_ip esta vacio."
+            exit 1
+          fi
+          gh variable set VM_PUBLIC_IP --body "$IP" --repo "$REPO"
+          echo "Variable VM_PUBLIC_IP actualizada a: ${IP}"
+          echo "Si este paso falla, actualizala manualmente: gh variable set VM_PUBLIC_IP --body '${IP}' --repo ${REPO}"

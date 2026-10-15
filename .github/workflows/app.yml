@@ -1,0 +1,415 @@
+# CI/CD de la APLICACION - despliegue blue/green en la VM de AWS
+# Filtro de paths (req. 4 del taller): este workflow SOLO se ejecuta cuando
+# cambian archivos de la aplicacion (app/**) o este mismo workflow.
+
+name: App CI/CD (Blue-Green)
+
+on:
+  push:
+    branches: [main]
+    paths: ["app/**", ".github/workflows/app.yml"]
+  pull_request:
+    branches: [main]
+    paths: ["app/**", ".github/workflows/app.yml"]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Accion a ejecutar"
+        type: choice
+        options: [deploy, rollback]
+        default: deploy
+      target_color:
+        description: "Rollback: color al que apuntar (auto = color inactivo)"
+        type: choice
+        options: [auto, blue, green]
+        default: auto
+
+# Endurecimiento: el token inicia sin NINGUN permiso; cada job pide solo el que usa.
+permissions: {}
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REGISTRY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+  # Tag unico por intento de ejecucion: el repositorio ECR usa tags inmutables,
+  # por lo que re-ejecutar un run no colisiona con el tag anterior.
+  IMAGE_TAG: sha-${{ github.sha }}-r${{ github.run_number }}a${{ github.run_attempt }}
+  # Tag local (sin registry) usado para construir y escanear la imagen.
+  LOCAL_IMAGE: bluegreen-app:${{ github.sha }}-r${{ github.run_number }}a${{ github.run_attempt }}
+
+jobs:
+  build:
+    name: Build y analisis de seguridad (Trivy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    if: github.event_name != 'workflow_dispatch' || inputs.action == 'deploy'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verificar variables requeridas del repositorio
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          faltan=""
+          [ -n "$AWS_REGION" ]     || faltan="$faltan AWS_REGION"
+          [ -n "$AWS_ACCOUNT_ID" ] || faltan="$faltan AWS_ACCOUNT_ID"
+          [ -n "$ECR_REPOSITORY" ] || faltan="$faltan ECR_REPOSITORY"
+          if [ -n "$faltan" ]; then
+            echo "::error::Faltan variables del repositorio:$faltan. Configuralas en Settings > Secrets and variables > Actions > Variables."
+            exit 1
+          fi
+
+      - name: Verificar Dockerfile de la aplicacion
+        run: |
+          if [ ! -f app/Dockerfile ]; then
+            echo "::error::No existe app/Dockerfile. El equipo de aplicacion debe crear la imagen en app/ (puerto 8080, healthcheck /health)."
+            exit 1
+          fi
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Construir imagen (sin publicar)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: app
+          push: false
+          load: true
+          provenance: false
+          tags: ${{ env.LOCAL_IMAGE }}
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,scope=app,mode=max
+
+      # Control de seguridad (req. 7): vulnerabilidades CRITICAL/HIGH bloquean el pipeline.
+      - name: Trivy - vulnerabilidades de la imagen (gate CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.LOCAL_IMAGE }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      # Control de seguridad: detecta secretos (claves, tokens) en el repositorio.
+      - name: Trivy - secretos expuestos en el repositorio
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret
+          exit-code: "1"
+          format: table
+
+      - name: Resumen del job (evidencias)
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then pub="no (en PR no se publica)"; else pub="si (job deploy)"; fi
+          {
+            echo "### App - Build y analisis de seguridad"
+            echo ""
+            echo "- Imagen construida: \`${LOCAL_IMAGE}\` (se publicara como \`${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}\`)"
+            echo "- Trivy imagen (CRITICAL/HIGH): sin hallazgos que bloqueen :white_check_mark:"
+            echo "- Trivy secretos del repositorio: sin hallazgos :white_check_mark:"
+            echo "- Publicacion en ECR: ${pub}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # La imagen viaja al job de deploy como artefacto efimero (nunca se versiona en el repo).
+      - name: Exportar imagen a artefacto
+        if: github.event_name != 'pull_request'
+        run: docker save "$LOCAL_IMAGE" | gzip > app-image.tar.gz
+
+      - name: Subir imagen como artefacto
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: app-image
+          path: app-image.tar.gz
+          retention-days: 3
+
+  deploy:
+    name: Publicar en ECR y desplegar blue/green
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # Necesario para asumir el rol IAM via OIDC (sin claves AWS en el repo).
+    if: github.event_name == 'push' || inputs.action == 'deploy'
+    # Un solo despliegue a la vez: los deploys se encolan, nunca se pisan entre si.
+    concurrency:
+      group: bluegreen-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Descargar imagen (artefacto)
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: app-image
+
+      - name: Cargar imagen local
+        run: docker load --input app-image.tar.gz
+
+      - name: Verificar variables requeridas del repositorio
+        env:
+          ECR_ROLE_ARN: ${{ vars.ECR_ROLE_ARN }} # TODO: CREAR EL ROL DEL ECR
+          VM_PUBLIC_IP: ${{ vars.VM_PUBLIC_IP }}
+        run: |
+          set -euo pipefail
+          faltan=""
+          [ -n "$AWS_REGION" ]    || faltan="$faltan AWS_REGION"
+          [ -n "$ECR_ROLE_ARN" ]  || faltan="$faltan ECR_ROLE_ARN"
+          [ -n "$VM_PUBLIC_IP" ]  || faltan="$faltan VM_PUBLIC_IP"
+          if [ -n "$faltan" ]; then
+            echo "::error::Faltan variables del repositorio:$faltan. Configuralas en Settings > Secrets and variables > Actions > Variables."
+            exit 1
+          fi
+
+      # Autenticacion federada con AWS: no existen claves de acceso almacenadas.
+      - name: Configurar credenciales AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.ECR_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Iniciar sesion en ECR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.ECR_REGISTRY }}
+
+      - name: Publicar imagen en ECR
+        run: |
+          set -euo pipefail
+          docker tag "$LOCAL_IMAGE" "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+      - name: Preparar clave SSH (GitHub Secret, req. 8)
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          install -m 600 /dev/null ~/.ssh/vm_key
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/vm_key
+
+      # Despliegue blue/green (actividades minimas del taller):
+      # 1) detectar color activo, 2) desplegar la nueva version en el color
+      # INACTIVO, 3) verificar /health del slot inactivo, 4) SOLO si la
+      # verificacion es exitosa, cambiar Nginx al nuevo color. Si /health
+      # falla, Nginx no se toca y la version activa sigue sirviendo.
+      - name: Desplegar en el color inactivo y cambiar Nginx si esta sano
+        env:
+          VM_HOST: ${{ vars.VM_PUBLIC_IP }}
+          SSH_USER: ${{ vars.VM_SSH_USER || 'ubuntu' }}
+        run: |
+          set -euo pipefail
+          ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 \
+            -i ~/.ssh/vm_key "${SSH_USER}@${VM_HOST}" \
+            bash -s -- "$ECR_REGISTRY" "$ECR_REPOSITORY" "$IMAGE_TAG" "$AWS_REGION" <<'REMOTE'
+          set -euo pipefail
+          REGISTRY="$1"; REPO="$2"; TAG="$3"; REGION="$4"
+          IMAGE="${REGISTRY}/${REPO}:${TAG}"
+          echo "==> Desplegando imagen: $IMAGE"
+
+          # Comprobaciones de convenciones (instaladas por el playbook de Ansible).
+          command -v docker >/dev/null 2>&1 || { echo "ERROR: docker no esta instalado en la VM (pendiente del playbook de Ansible)."; exit 1; }
+          command -v aws    >/dev/null 2>&1 || { echo "ERROR: awscli no esta instalado en la VM (pendiente del playbook de Ansible)."; exit 1; }
+          [ -f /etc/nginx/conf.d/bluegreen.conf ] || { echo "ERROR: falta /etc/nginx/conf.d/bluegreen.conf (pendiente del playbook de Ansible)."; exit 1; }
+          sudo mkdir -p /opt/bluegreen
+
+          # 1) Color activo -> desplegar en el color INACTIVO.
+          ACTIVE="$(cat /opt/bluegreen/current_color 2>/dev/null || true)"
+          if [ "$ACTIVE" != "blue" ] && [ "$ACTIVE" != "green" ]; then ACTIVE="blue"; fi
+          if [ "$ACTIVE" = "blue" ]; then TARGET="green"; else TARGET="blue"; fi
+          if [ "$TARGET" = "blue" ]; then TARGET_PORT=8081; else TARGET_PORT=8082; fi
+          echo "Color activo: ${ACTIVE}. Desplegando en el color inactivo: ${TARGET} (puerto ${TARGET_PORT})."
+
+          # 2) Descargar la imagen con el rol de instancia (la VM no guarda credenciales).
+          aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$REGISTRY"
+          docker pull "$IMAGE"
+
+          # 3) Reemplazar SOLO el contenedor del color inactivo; el activo queda intacto.
+          docker rm -f "app-${TARGET}" 2>/dev/null || true
+          docker run -d --name "app-${TARGET}" --restart unless-stopped -p "${TARGET_PORT}:8080" "$IMAGE"
+
+          # 4) Verificar el endpoint de salud del color inactivo.
+          sleep 3
+          HEALTH="fail"
+          for intento in $(seq 1 15); do
+            if curl -fsS "http://127.0.0.1:${TARGET_PORT}/health" >/dev/null 2>&1; then HEALTH="ok"; break; fi
+            sleep 2
+          done
+          if [ "$HEALTH" != "ok" ]; then
+            echo "ERROR: /health del color ${TARGET} no responde. NO se cambia Nginx; el color activo (${ACTIVE}) sigue sirviendo la version anterior."
+            exit 1
+          fi
+          echo "Health check del color ${TARGET}: OK."
+
+          # 5) La verificacion fue exitosa: cambiar el proxy de Nginx al nuevo color.
+          sudo sed -i -E "s|(proxy_pass http://127\.0\.0\.1:)[0-9]+(;)|\1${TARGET_PORT}\2|" /etc/nginx/conf.d/bluegreen.conf
+          if ! grep -q "proxy_pass http://127.0.0.1:${TARGET_PORT};" /etc/nginx/conf.d/bluegreen.conf; then
+            echo "ERROR: el cambio de proxy no se aplico (el formato de bluegreen.conf no coincide con la convencion del README)."
+            exit 1
+          fi
+          sudo nginx -t
+          sudo nginx -s reload
+          echo "${TARGET}" | sudo tee /opt/bluegreen/current_color >/dev/null
+          echo "Nginx ahora sirve el color ${TARGET} (version nueva). La version anterior sigue corriendo en ${ACTIVE} por si se necesita rollback."
+          REMOTE
+
+      - name: Health check publico (a traves de Nginx)
+        env:
+          VM_HOST: ${{ vars.VM_PUBLIC_IP }}
+        run: |
+          set -euo pipefail
+          echo "Verificando http://${VM_HOST}/health ..."
+          curl -fsS --retry 5 --retry-delay 3 --retry-all-errors "http://${VM_HOST}/health"
+          echo "Aplicacion saludable via Nginx."
+
+      - name: Resumen del despliegue (evidencias)
+        env:
+          VM_HOST: ${{ vars.VM_PUBLIC_IP }}
+          SSH_USER: ${{ vars.VM_SSH_USER || 'ubuntu' }}
+        run: |
+          COLOR="$(ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/vm_key "${SSH_USER}@${VM_HOST}" cat /opt/bluegreen/current_color 2>/dev/null || echo desconocido)"
+          {
+            echo "### App - Despliegue blue/green"
+            echo ""
+            echo "- Imagen publicada en ECR: \`${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}\`"
+            echo "- Color activo tras el despliegue: **${COLOR}**"
+            echo "- URL publica: http://${VM_HOST}/"
+            echo "- Health check: http://${VM_HOST}/health"
+            echo "- Rollback: ejecutar este workflow manualmente con **action=rollback** (reapunta Nginx al color anterior)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ===========================================================================
+  # ROLLBACK (actividades minimas: "mantener una forma sencilla de regresar a
+  # la version anterior"). Se ejecuta manualmente desde la pestana Actions:
+  # Run workflow -> action=rollback. El contenedor de la version anterior
+  # sigue corriendo en el otro slot, por lo que el rollback es solo cambiar el
+  # proxy de Nginx de vuelta (sin redesplegar).
+  # ===========================================================================
+  rollback:
+    name: Rollback - reapuntar Nginx al color anterior
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.action == 'rollback'
+    concurrency:
+      group: bluegreen-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Validar entrada
+        env:
+          TARGET_COLOR: ${{ inputs.target_color }}
+        run: |
+          set -euo pipefail
+          case "$TARGET_COLOR" in
+            auto|blue|green) ;;
+            *) echo "::error::target_color invalido: '$TARGET_COLOR'"; exit 1 ;;
+          esac
+
+      - name: Verificar variables requeridas del repositorio
+        env:
+          VM_PUBLIC_IP: ${{ vars.VM_PUBLIC_IP }}
+        run: |
+          set -euo pipefail
+          if [ -z "$VM_PUBLIC_IP" ]; then
+            echo "::error::Falta la variable del repositorio VM_PUBLIC_IP."
+            exit 1
+          fi
+
+      - name: Preparar clave SSH (GitHub Secret, req. 8)
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          install -m 600 /dev/null ~/.ssh/vm_key
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/vm_key
+
+      - name: Reapuntar Nginx al color objetivo
+        env:
+          VM_HOST: ${{ vars.VM_PUBLIC_IP }}
+          SSH_USER: ${{ vars.VM_SSH_USER || 'ubuntu' }}
+          TARGET_COLOR: ${{ inputs.target_color }}
+        run: |
+          set -euo pipefail
+          ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 \
+            -i ~/.ssh/vm_key "${SSH_USER}@${VM_HOST}" \
+            bash -s -- "$TARGET_COLOR" <<'REMOTE'
+          set -euo pipefail
+          REQUESTED="$1"
+          ACTIVE="$(cat /opt/bluegreen/current_color 2>/dev/null || true)"
+          if [ "$ACTIVE" != "blue" ] && [ "$ACTIVE" != "green" ]; then ACTIVE="blue"; fi
+          if [ "$REQUESTED" = "auto" ]; then
+            if [ "$ACTIVE" = "blue" ]; then TARGET="green"; else TARGET="blue"; fi
+          else
+            TARGET="$REQUESTED"
+          fi
+          if [ "$TARGET" = "$ACTIVE" ]; then
+            echo "El color activo ya es ${ACTIVE}; nada que revertir."
+            exit 0
+          fi
+          if [ "$TARGET" = "blue" ]; then TARGET_PORT=8081; else TARGET_PORT=8082; fi
+          echo "Rollback: color activo ${ACTIVE} -> reapuntando a ${TARGET} (puerto ${TARGET_PORT})."
+
+          # El contenedor del color objetivo debe seguir corriendo la version anterior.
+          if ! docker ps --format '{{.Names}}' | grep -qx "app-${TARGET}"; then
+            echo "ERROR: no hay contenedor 'app-${TARGET}' en ejecucion; no se puede hacer rollback a ese color."
+            exit 1
+          fi
+
+          HEALTH="fail"
+          for i in $(seq 1 10); do
+            if curl -fsS "http://127.0.0.1:${TARGET_PORT}/health" >/dev/null 2>&1; then HEALTH="ok"; break; fi
+            sleep 2
+          done
+          if [ "$HEALTH" != "ok" ]; then
+            echo "ERROR: el color ${TARGET} no esta saludable; Nginx sigue apuntando a ${ACTIVE}."
+            exit 1
+          fi
+
+          sudo sed -i -E "s|(proxy_pass http://127\.0\.0\.1:)[0-9]+(;)|\1${TARGET_PORT}\2|" /etc/nginx/conf.d/bluegreen.conf
+          if ! grep -q "proxy_pass http://127.0.0.1:${TARGET_PORT};" /etc/nginx/conf.d/bluegreen.conf; then
+            echo "ERROR: el cambio de proxy no se aplico (formato de bluegreen.conf no coincide con la convencion del README)."
+            exit 1
+          fi
+          sudo nginx -t
+          sudo nginx -s reload
+          echo "${TARGET}" | sudo tee /opt/bluegreen/current_color >/dev/null
+          echo "Rollback completado: Nginx sirve el color ${TARGET}."
+          REMOTE
+
+      - name: Health check publico (a traves de Nginx)
+        env:
+          VM_HOST: ${{ vars.VM_PUBLIC_IP }}
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 5 --retry-delay 3 --retry-all-errors "http://${VM_HOST}/health"
+          echo "Aplicacion saludable via Nginx tras el rollback."
+
+      - name: Resumen del rollback (evidencias)
+        env:
+          VM_HOST: ${{ vars.VM_PUBLIC_IP }}
+          TARGET_COLOR: ${{ inputs.target_color }}
+        run: |
+          {
+            echo "### App - Rollback ejecutado"
+            echo ""
+            echo "- Nginx reapuntado al color solicitado: **${TARGET_COLOR}** (auto = color inactivo)"
+            echo "- Health check: http://${VM_HOST}/health"
+          } >> "$GITHUB_STEP_SUMMARY"
