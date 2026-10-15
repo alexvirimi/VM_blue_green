@@ -2,8 +2,6 @@
 
 Despliegue **blue/green** de una aplicación contenerizada en AWS, con infraestructura como código, CI/CD automatizado y controles de seguridad.
 
-> **Estado del documento (Fase 1):** este README documenta la arquitectura de CI/CD, los controles de seguridad y las decisiones de diseño. Se completará en una **Fase 2** con las instrucciones finales de despliegue, las evidencias de ejecución y el procedimiento detallado de destrucción cuando el proyecto esté integrado.
-
 ## Contexto
 
 Una empresa quiere disminuir el tiempo de indisponibilidad al actualizar una aplicación contenerizada.
@@ -223,11 +221,3 @@ Configurar en **Settings → Secrets and variables → Actions**:
 - Sin aprobaciones manuales para producción; *mejora: GitHub Environments con reviewers*.
 - `VM_PUBLIC_IP` como variable de repositorio: si la instancia se recrea, hay una ventana donde el deploy apunta a la IP vieja.
 - Los contenedores no tienen límites de recursos (cpu/memoria) definidos por defecto en `docker run`; el control de costos principal es el presupuesto/budgets de AWS y el tamaño `t3.micro`.
-
-## Evidencias
-
-*(Fase 2)* Capturas de los runs de cada workflow, resultados de Checkov y Trivy, cambio de aplicación desplegado, cambio de infraestructura aplicado y rollback. Se publicarán en `docs/evidencias/`.
-
-## Destrucción de la infraestructura
-
-*(Fase 2: procedimiento completo con evidencias.)* En resumen: el estado se destruye con `terraform destroy` (misma configuración de backend y tfvars que usa el workflow de infra), lo que elimina la VM, el ECR y los recursos asociados; el bucket S3 del estado es preexistente y no lo crea/elimina este proyecto. Detalles y verificación final pendientes para la fase 2.
