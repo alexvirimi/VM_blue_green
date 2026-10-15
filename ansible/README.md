@@ -9,8 +9,8 @@ ansible/
 ├── .ansible-lint
 ├── inventory/
 │   └── hosts.yml.example         # copiar a hosts.yml y cambiar las variables
-├── group_vars/
-│   └── all.yml                   # variables (puertos, límites, health check)
+│   └── group_vars/
+│       └── all.yml                   # variables (puertos, límites, health check)
 ├── playbooks/
 │   ├── setup.yml                 # instala Docker y Nginx
 │   ├── demo.yml                  # prueba con contenedores sustitutos
@@ -95,10 +95,18 @@ Comprobación en la VM:
 docker --version
 systemctl status nginx
 ```
+Si no se tiene docker se deben ejecutar los siguientes comandos:
+
+```bash
+sudo apt update
+sudo apt install -y docker.io ansible
+sudo apt install -y nginx
+```
 
 ### 6. Probar el mecanismo blue/green con contenedores demo
-Antes de utilizar la aplicación real, para estar seguro de 
-Sustituye a la aplicación real mientras no esté disponible en ECR. Levanta `app-blue` y `app-green` con una imagen pública y deja Nginx apuntando a blue.
+
+Antes de utilizar la aplicación real, para estar seguro de que todo funciona o en caso de no tener disponible ECR podemos realizar un demo.
+Este demo sustituye a la aplicación real mientras no esté disponible en ECR. Levanta `app-blue` y `app-green` con una imagen pública y deja Nginx apuntando a blue.
  
 ```bash
 ansible-playbook -i inventory/hosts.yml playbooks/demo.yml
@@ -156,3 +164,9 @@ docker ps
 cat /opt/bluegreen/active_color /opt/bluegreen/previous_color
 sudo nginx -t
 ```
+
+## Decisiones
+ 
+- **Roles en lugar de un playbook plano**: `common`, `nginx` y `bluegreen` se reutilizan entre playbooks; el cambio de Nginx está escrito en un único lugar (`switch.yml`).
+- **Estado en archivos de la VM**: el color activo y el anterior se guardan en `/opt/bluegreen`, sin base de datos externa.
+- **`reload` en lugar de `restart`**: Nginx recarga la configuración sin cortar conexiones activas.

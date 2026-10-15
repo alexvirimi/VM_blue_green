@@ -35,13 +35,10 @@ variable "public_subnet_cidr" {
 }
 
 variable "ssh_allowed_cidr" {
-  description = "CIDR IPv4 autorizado para SSH. Usa tu IP pública con /32; nunca uses 0.0.0.0/0."
+  description = "Obsoleta: se conserva temporalmente para compatibilidad con terraform.tfvars; SSH ya no se permite y la EC2 se administra mediante SSM."
   type        = string
-
-  validation {
-    condition     = can(cidrnetmask(var.ssh_allowed_cidr)) && can(regex("/32$", var.ssh_allowed_cidr))
-    error_message = "ssh_allowed_cidr debe ser una dirección IPv4 válida con máscara /32."
-  }
+  default     = null
+  nullable    = true
 }
 
 variable "key_name" {

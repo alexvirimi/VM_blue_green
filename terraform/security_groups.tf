@@ -1,6 +1,6 @@
 resource "aws_security_group" "app" {
   name        = "${var.project_name}-app-sg"
-  description = "Permite HTTP publico y SSH solo desde el CIDR administrativo."
+  description = "Permite HTTP publico; la administracion se realiza mediante AWS Systems Manager."
   vpc_id      = aws_vpc.main.id
 
   ingress {
@@ -9,14 +9,6 @@ resource "aws_security_group" "app" {
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "SSH limitado a una unica IP administrativa"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = [var.ssh_allowed_cidr]
   }
 
   egress {
