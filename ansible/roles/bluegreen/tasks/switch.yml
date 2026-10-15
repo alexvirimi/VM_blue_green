@@ -1,10 +1,10 @@
 ---
-# Requiere: target_color. Cambia Nginx al color indicado.
+# Requiere: bluegreen_target_color. Cambia Nginx al color indicado.
 # No se verifica, se utiliza luego de que el color verificado haya sido verificado
 - name: Validar color destino
   ansible.builtin.assert:
-    that: target_color in colors
-    fail_msg: "Color inválido: {{ target_color }}"
+    that: bluegreen_target_color in colors
+    fail_msg: "Color inválido: {{ bluegreen_target_color }}"
 
 - name: Respaldar config actual de Nginx
   ansible.builtin.copy:
@@ -14,14 +14,14 @@
     mode: "0644"
   become: true
 
-- name: Escribir config apuntando a {{ target_color }}
+- name: Escribir config apuntando a {{ bluegreen_target_color }}
   ansible.builtin.template:
     src: "{{ role_path }}/../nginx/templates/app.config.j2"
     dest: /etc/nginx/conf.d/app.conf
     mode: "0644"
   vars:
-    active_color: "{{ target_color }}"
-    active_port: "{{ colors[target_color] }}"
+    active_color: "{{ bluegreen_target_color }}"
+    active_port: "{{ colors[bluegreen_target_color] }}"
   become: true
 
 - name: Validar sintaxis de Nginx
@@ -43,11 +43,11 @@
     dest: "{{ state_dir }}/previous_color"
     mode: "0644"
   become: true
-  when: active_color != target_color and active_color != 'none'
+  when: active_color != bluegreen_target_color and active_color != 'none'
 
 - name: Guardar color activo
   ansible.builtin.copy:
-    content: "{{ target_color }}\n"
+    content: "{{ bluegreen_target_color }}\n"
     dest: "{{ state_dir }}/active_color"
     mode: "0644"
   become: true

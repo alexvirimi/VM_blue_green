@@ -13,7 +13,7 @@
 - name: Definir color inactivo (destino del deploy)
   ansible.builtin.set_fact:
     bluegreen_target_color: "{{ 'green' if active_color == 'blue' else 'blue' }}"
-    registry: "{{ ecr_repository_url.split('/')[0] }}"
+    bluegreen_registry: "{{ ecr_repository_url.split('/')[0] }}"
 
 - name: "Estado: activo={{ active_color }}, desplegando en {{ bluegreen_target_color }}"
   ansible.builtin.debug:
@@ -23,7 +23,7 @@
   ansible.builtin.shell: |
     set -o pipefail
     aws ecr get-login-password --region {{ aws_region }} \
-      | docker login --username AWS --password-stdin {{ registry }}
+      | docker login --username AWS --password-stdin {{ bluegreen_registry }}
   args:
     executable: /bin/bash
   changed_when: false

@@ -1,19 +1,19 @@
 ---
 - name: Leer color activo
   ansible.builtin.slurp:
-    src: "{{ state_dir }}/active_color"
+    src: "{{ state_dir }}/bluegreen_active_color"
   register: bluegreen_active_raw
   failed_when: false
   become: true
 
 - name: Leer color anterior
   ansible.builtin.slurp:
-    src: "{{ state_dir }}/previous_color"
+    src: "{{ state_dir }}/bluegreen_previous_color"
   register: bluegreen_previous_raw
   failed_when: false
   become: true
 
 - name: Guardar estado
   ansible.builtin.set_fact:
-    active_color: "{{ (bluegreen_active_raw.content | b64decode | trim) if bluegreen_active_raw.content is defined else 'none' }}"
-    previous_color: "{{ (bluegreen_previous_raw.content | b64decode | trim) if bluegreen_previous_raw.content is defined else 'none' }}"
+    bluegreen_active_color: "{{ (bluegreen_active_raw.content | b64decode | trim) if bluegreen_active_raw.content is defined else 'none' }}"
+    bluegreen_previous_color: "{{ (bluegreen_previous_raw.content | b64decode | trim) if bluegreen_previous_raw.content is defined else 'none' }}"

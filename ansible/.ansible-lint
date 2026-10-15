@@ -3,4 +3,3 @@ skip_list:
   # Para que fuera más legible por las variables que se comparten como active_color y target_color
   - var-naming[no-role-prefix]
   - name[template]
-  
