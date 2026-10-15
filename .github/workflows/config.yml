@@ -1,0 +1,191 @@
+# CI/CD de CONFIGURACION - Ansible y Nginx
+# Filtro de paths (req. 4 del taller): este workflow SOLO se ejecuta cuando
+# cambian archivos de configuracion (ansible/**) o este mismo workflow.
+
+name: Config CI/CD (Ansible)
+
+on:
+  push:
+    branches: [main, fix-ansible]
+    paths: ["ansible/**", ".github/workflows/config.yml"]
+  pull_request:
+    branches: [main, fix-ansible]
+    paths: ["ansible/**", ".github/workflows/config.yml"]
+  workflow_dispatch:
+
+# Endurecimiento: token sin permisos por defecto; cada job pide solo el minimo.
+permissions: {}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Validaciones: se ejecutan en PR y push a main. No usan credenciales.
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Validaciones (yamllint, ansible-lint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Aviso si aun no hay archivos de configuracion
+        if: hashFiles('ansible/**') == ''
+        run: echo "::warning::No hay archivos en ansible/ todavia; nada que validar."
+
+      - name: Instalar herramientas de lint
+        if: hashFiles('ansible/**') != ''
+        run: pip install --quiet ansible-lint yamllint
+
+      # Control de calidad de la configuracion: sintaxis y estilo YAML.
+      - name: yamllint
+        if: hashFiles('ansible/**') != ''
+        run: "yamllint -d '{extends: default, rules: {line-length: disable, truthy: disable, document-start: disable}}' ansible/"
+
+      # Control de calidad de la configuracion: buenas practicas de Ansible.
+      - name: ansible-lint
+        if: hashFiles('ansible/**') != ''
+        run: ansible-lint -c ansible/.ansible-lint ansible/
+
+      - name: Resumen del job (evidencias)
+        if: hashFiles('ansible/**') != ''
+        run: |
+          {
+            echo "### Config - Validaciones"
+            echo ""
+            echo "- yamllint: OK :white_check_mark:"
+            echo "- ansible-lint: OK :white_check_mark:"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Aplicacion del playbook: solo en push a main (o ejecucion manual).
+  # ---------------------------------------------------------------------------
+  apply-config:
+    name: Aplicar configuracion con Ansible
+    needs: lint
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    concurrency:
+      group: ansible-apply
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Aviso si aun no hay archivos de configuracion
+        if: hashFiles('ansible/**') == ''
+        run: echo "::warning::No hay archivos en ansible/ todavia; no se aplica configuracion en este run."
+
+      - name: Verificar variables requeridas del repositorio
+        if: hashFiles('ansible/**') != ''
+        env:
+          VM_PUBLIC_IP: ${{ vars.VM_PUBLIC_IP }}
+        run: |
+          set -euo pipefail
+          if [ -z "$VM_PUBLIC_IP" ]; then
+            echo "::error::Falta la variable del repositorio VM_PUBLIC_IP (Settings > Secrets and variables > Actions > Variables)."
+            exit 1
+          fi
+
+      - name: Instalar Ansible
+        if: hashFiles('ansible/**') != ''
+        run: pip install --quiet ansible-core
+
+      - name: Instalar dependencias de Galaxy (si existen)
+        if: hashFiles('ansible/**') != ''
+        run: |
+          if [ -f ansible/requirements.yml ]; then
+            ansible-galaxy collection install -r ansible/requirements.yml
+          fi
+
+      - name: Preparar clave SSH (GitHub Secret, req. 8)
+        if: hashFiles('ansible/**') != ''
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          install -m 600 /dev/null ~/.ssh/vm_key
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/vm_key
+
+      - name: Seleccionar playbook e inventario
+        if: hashFiles('ansible/**') != ''
+        id: sel
+        env:
+          VM_PUBLIC_IP: ${{ vars.VM_PUBLIC_IP }}
+        run: |
+          set -euo pipefail
+          if [ -f ansible/playbook.yml ]; then
+            PLAYBOOK="ansible/playbook.yml"
+          elif [ -f ansible/playbooks/setup.yml ]; then
+            PLAYBOOK="ansible/playbooks/setup.yml"
+          elif [ -f ansible/site.yml ]; then
+            PLAYBOOK="ansible/site.yml"
+          else
+            echo "::error::No se encontro playbook.yml, site.yml, ni playbooks/setup.yml. El equipo de configuracion debe crear el playbook de entrada."
+            exit 1
+          fi
+          if [ -f ansible/inventory/hosts.yml ]; then
+            INVENTORY="ansible/inventory/hosts.yml"
+          else
+            INVENTORY="ansible/inventory/ci.yml"   # dentro de inventory/ para cargar group_vars
+            cat > "$INVENTORY" <<EOF
+          all:
+            hosts:
+              vm1:
+                ansible_host: ${VM_PUBLIC_IP}
+                ansible_user: ubuntu
+                ansible_ssh_private_key_file: ~/.ssh/vm_key
+          EOF
+            echo "::notice::Inventario temporal generado con VM_PUBLIC_IP."
+          fi
+          echo "playbook=$PLAYBOOK" >> "$GITHUB_OUTPUT"
+          echo "inventory=$INVENTORY" >> "$GITHUB_OUTPUT"      
+
+      - name: Ejecutar playbook contra la VM
+        if: hashFiles('ansible/**') != ''
+        env:
+          ANSIBLE_CONFIG: ansible/ansible.cfg
+          PLAYBOOK: ${{ steps.sel.outputs.playbook }}
+          INVENTORY: ${{ steps.sel.outputs.inventory }}
+          VM_PUBLIC_IP: ${{ vars.VM_PUBLIC_IP }}
+          SSH_USER: ${{ vars.VM_SSH_USER || 'ubuntu' }}
+        run: |
+          set -euo pipefail
+          ansible-playbook -i "$INVENTORY" "$PLAYBOOK" \
+            --user "$SSH_USER" \
+            --private-key ~/.ssh/vm_key \
+            --ssh-common-args="-o StrictHostKeyChecking=accept-new" \
+            --extra-vars "vm_public_ip=$VM_PUBLIC_IP" 
+        # --extra-vars no se utiliza en ningún rol, se puede quitar, sin embargo, en caso de hacerse uso en el futuro se deja
+
+      # No bloquea el pipeline: en el primer arranque todavia no hay aplicacion
+      # desplegada; el health check es informativo hasta que app.yml despliegue.
+      - name: Health check (informativo)
+        if: hashFiles('ansible/**') != ''
+        continue-on-error: true
+        env:
+          VM_PUBLIC_IP: ${{ vars.VM_PUBLIC_IP }}
+        run: |
+          curl -fsS --retry 3 --retry-delay 3 --retry-all-errors "http://${VM_PUBLIC_IP}/health" \
+            || echo "::warning::/health no responde todavia (normal si la aplicacion aun no se despliega)."
+
+      - name: Resumen del job (evidencias)
+        if: hashFiles('ansible/**') != ''
+        env:
+          PLAYBOOK: ${{ steps.sel.outputs.playbook }}
+        run: |
+          {
+            echo "### Config - Configuracion aplicada"
+            echo ""
+            echo "- Playbook ejecutado: \`${PLAYBOOK}\`"
+            echo "- Health check informativo: ver logs"
+          } >> "$GITHUB_STEP_SUMMARY"

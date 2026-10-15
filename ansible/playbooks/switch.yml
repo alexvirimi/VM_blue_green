@@ -1,5 +1,5 @@
 ---
-- name: Cambiar Nginx hacia la versión nueva, es decir, el color inactivo ({{ target_color }})
+- name: Cambiar Nginx hacia la versión nueva, el color indicado con target_color (blue o green)
   hosts: all
   gather_facts: false
   roles:
