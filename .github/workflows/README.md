@@ -108,7 +108,7 @@ sequenceDiagram
         Note over GH,VM: Despliegue completado. La versión anterior sigue corriendo en el otro slot.
     else health check falla
         GH-->>N: NO se toca Nginx (rollback implícito)
-        Note over GH,VM: La versión activa sigue sirviendo; el run falla visiblemente.
+        Note over GH,VM: La versión activa sigue sirviendo, el run falla visiblemente.
     end
 ```
 
