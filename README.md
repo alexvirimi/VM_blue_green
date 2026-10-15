@@ -210,7 +210,7 @@ Configurar en **Settings → Secrets and variables → Actions**:
 - [x] **Equipo infra:** definir el bucket real del backend (`backend.hcl` tiene un placeholder).
 - [ ] **Equipo infra:** sincronizar `terraform.tfvars.example` con `variables.tf` (menciona `alert_email`, `budget_limit_usd`, etc., que aún no existen) y eliminar los dos archivos basura en `terraform/` (comandos pegados como archivos: `budgets describe-budgets…` y `cloudtrail validate-logs ✓`).
 - [x] **Equipo app:** `Dockerfile` en `app/`, app escuchando en 8080 con `/health`.
-- [ ] **Equipo config:** playbook de entrada `ansible/playbook.yml` (o `site.yml`) que instale docker, awscli, nginx y cree `/etc/nginx/conf.d/bluegreen.conf` con `proxy_pass http://127.0.0.1:8081;` (formato que `app.yml` espera para el switch).
+- [x] **Equipo config:** playbook de entrada `ansible/playbook.yml` (o `site.yml`) que instale docker, awscli, nginx y cree `/etc/nginx/conf.d/bluegreen.conf` con `proxy_pass http://127.0.0.1:8081;` (formato que `app.yml` espera para el switch).
 - [ ] **Verificar** si el `GITHUB_TOKEN` puede hacer `gh variable set VM_PUBLIC_IP` tras el apply; si no, usar el fallback manual documentado.
 
 ## Limitaciones y posibles mejoras
