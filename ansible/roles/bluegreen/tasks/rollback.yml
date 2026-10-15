@@ -5,27 +5,27 @@
 
 - name: Verificar que existe una versión anterior
   ansible.builtin.assert:
-    that: previous_color in colors
+    that: bluegreen_previous_color in colors
     fail_msg: "No hay color anterior registrado; no se puede hacer rollback."
 
 - name: Definir destino
   ansible.builtin.set_fact:
-    target_color: "{{ previous_color }}"
+    bluegreen_target_color: "{{ bluegreen_previous_color }}"
 
 - name: Asegurar que el contenedor anterior está corriendo
   community.docker.docker_container:
-    name: "app-{{ target_color }}"
+    name: "app-{{ bluegreen_target_color }}"
     state: started
   become: true
 
 - name: Health check del color anterior
   ansible.builtin.include_tasks: health_check.yml
   vars:
-    check_port: "{{ colors[target_color] }}"
+    check_port: "{{ colors[bluegreen_target_color] }}"
 
 - name: Cambiar tráfico al color anterior
   ansible.builtin.include_tasks: switch.yml
 
 - name: Resultado
   ansible.builtin.debug:
-    msg: "Rollback hecho: activo {{ target_color }}."
+    msg: "Rollback hecho: activo {{ bluegreen_target_color }}."

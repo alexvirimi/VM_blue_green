@@ -18,6 +18,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "ansible_ssm" {
     status = "Enabled"
     filter {}
     expiration { days = 1 }
+    abort_incomplete_multipart_upload { days_after_initiation = 1 }
   }
 }
 

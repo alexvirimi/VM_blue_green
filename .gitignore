@@ -1,3 +1,6 @@
+# Imagenes exportadas por CI
+app-image.tar.gz
+
 cd /mnt/c/Users/mjuli/OneDrive/Documentos/GitHub/Zero-Trust-Project
 cat > .gitignore <<'EOF'
 # Terraform
