@@ -1,0 +1,7 @@
+---
+- name: Configurar la VM (Docker + Nginx)
+  hosts: all
+  gather_facts: true
+  roles:
+    - common
+    - nginx

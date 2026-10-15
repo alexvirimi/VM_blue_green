@@ -1,0 +1,8 @@
+---
+- name: Regresar a la versión anterior
+  hosts: all
+  gather_facts: false
+  roles:
+    - role: bluegreen
+      vars:
+        bluegreen_action: rollback

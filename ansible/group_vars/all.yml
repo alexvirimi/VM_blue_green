@@ -1,0 +1,23 @@
+---
+# Entradas que vienen de Terraform / CI (pasar con -e)
+aws_region: us-east-2
+ecr_repository_url: ""          # terraform output ecr_repository_url
+image_tag: ""                   # SHA del commit; el ECR es IMMUTABLE
+
+app_container_port: 8080        # puerto interno del contenedor
+health_path: /health
+# Puerto de los colores
+colors:
+  blue: 8081
+  green: 8082
+state_dir: /opt/bluegreen
+
+# Para playbooks/demo.yml
+demo_image: hashicorp/http-echo:1.0
+
+# Control de recursos para costos
+container_memory: 256m
+container_cpus: 0.5
+# Health check
+health_retries: 15
+health_delay: 2

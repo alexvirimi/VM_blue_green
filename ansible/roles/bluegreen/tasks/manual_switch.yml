@@ -1,0 +1,14 @@
+---
+# Cambio manual de tráfico, Ngnix a un color: -e target_color=blue|green
+# Solo se cambia hacia la versión nueva si la verificación es exitosa
+# En caso de no serlo, se mantiene el tráfico del color activo
+- name: Leer estado actual
+  ansible.builtin.include_tasks: read_state.yml
+
+- name: Verificar que el color destino responde antes de cambiar
+  ansible.builtin.include_tasks: health_check.yml
+  vars:
+    check_port: "{{ colors[target_color] }}"
+
+- name: Cambiar Nginx
+  ansible.builtin.include_tasks: switch.yml

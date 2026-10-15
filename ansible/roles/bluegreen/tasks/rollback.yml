@@ -1,0 +1,31 @@
+# Volver a la versión anterior del despliegue (rollback)
+---
+- name: Leer estado actual
+  ansible.builtin.include_tasks: read_state.yml
+
+- name: Verificar que existe una versión anterior
+  ansible.builtin.assert:
+    that: previous_color in colors
+    fail_msg: "No hay color anterior registrado; no se puede hacer rollback."
+
+- name: Definir destino
+  ansible.builtin.set_fact:
+    target_color: "{{ previous_color }}"
+
+- name: Asegurar que el contenedor anterior está corriendo
+  community.docker.docker_container:
+    name: "app-{{ target_color }}"
+    state: started
+  become: true
+
+- name: Health check del color anterior
+  ansible.builtin.include_tasks: health_check.yml
+  vars:
+    check_port: "{{ colors[target_color] }}"
+
+- name: Cambiar tráfico al color anterior
+  ansible.builtin.include_tasks: switch.yml
+
+- name: Resultado
+  ansible.builtin.debug:
+    msg: "Rollback hecho: activo {{ target_color }}."

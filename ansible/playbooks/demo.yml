@@ -1,0 +1,20 @@
+---
+# Demo para probar que Nginx y Docker están funcionando en la VM, sin necesidad de un ECR ni un despliegue real
+- name: Demo blue/green con contenedores sustitutos
+  hosts: all
+  gather_facts: true
+  roles:
+    - common
+    - nginx
+  tasks:
+    - name: Crear contenedores demo
+      ansible.builtin.include_role:
+        name: bluegreen
+        tasks_from: demo_containers.yml
+
+    - name: Apuntar Nginx a blue
+      ansible.builtin.include_role:
+        name: bluegreen
+        tasks_from: manual_switch.yml
+      vars:
+        target_color: blue

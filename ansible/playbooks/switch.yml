@@ -1,0 +1,8 @@
+---
+- name: Cambiar Nginx hacia la versión nueva, es decir, el color inactivo ({{ target_color }})
+  hosts: all
+  gather_facts: false
+  roles:
+    - role: bluegreen
+      vars:
+        bluegreen_action: manual_switch
