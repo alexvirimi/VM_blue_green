@@ -1,0 +1,9 @@
+# Terraform - artefactos locales (nunca se versionan)
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform/terraform.tfvars
+*.tfplan
+
+# Imagenes exportadas por CI
+app-image.tar.gz
