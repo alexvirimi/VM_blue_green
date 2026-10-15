@@ -22,6 +22,11 @@ resource "aws_iam_role" "app" {
   }
 }
 
+resource "aws_iam_role_policy_attachment" "app_ssm" {
+  role       = aws_iam_role.app.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 data "aws_iam_policy_document" "ecr_pull" {
   statement {
     sid    = "GetEcrAuthorizationToken"

@@ -95,6 +95,13 @@ Comprobación en la VM:
 docker --version
 systemctl status nginx
 ```
+Si no se tiene docker se deben ejecutar los siguientes comandos:
+
+```bash
+sudo apt update
+sudo apt install -y docker.io ansible
+sudo apt install -y nginx
+```
 
 ### 6. Probar el mecanismo blue/green con contenedores demo
 Antes de utilizar la aplicación real, para estar seguro de 
