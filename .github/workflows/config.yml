@@ -153,6 +153,7 @@ jobs:
       - name: Ejecutar playbook contra la VM
         if: hashFiles('ansible/**') != ''
         env:
+          ANSIBLE_CONFIG: ansible/ansible.cfg
           PLAYBOOK: ${{ steps.sel.outputs.playbook }}
           INVENTORY: ${{ steps.sel.outputs.inventory }}
           VM_PUBLIC_IP: ${{ vars.VM_PUBLIC_IP }}
