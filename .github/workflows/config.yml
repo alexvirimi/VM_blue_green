@@ -133,10 +133,10 @@ jobs:
             echo "::error::No se encontro playbook.yml (ni site.yml). El equipo de configuracion debe crear el playbook de entrada."
             exit 1
           fi
-          if [ -f inventory/hosts.yml ]; then
-            INVENTORY="inventory/hosts.yml"
+          if [ -f ansible/inventory/hosts.yml ]; then
+            INVENTORY="ansible/inventory/hosts.yml"
           else
-            INVENTORY="inventory/ci.yml"   # dentro de inventory/ para cargar group_vars
+            INVENTORY="ansible/inventory/ci.yml"   # dentro de inventory/ para cargar group_vars
             cat > "$INVENTORY" <<EOF
           all:
             hosts:
