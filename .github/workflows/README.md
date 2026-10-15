@@ -207,11 +207,11 @@ Configurar en **Settings → Secrets and variables → Actions**:
 
 ## Coordinación y pendientes
 
-- [ ] **Equipo infra:** crear el rol OIDC de Terraform para CI (`TF_ROLE_ARN`) con permisos de estado S3 + recursos del proyecto; el actual solo tiene permisos de push a ECR.
+- [x] **Equipo infra:** crear el rol OIDC de Terraform para CI (`TF_ROLE_ARN`) con permisos de estado S3 + recursos del proyecto; el actual solo tiene permisos de push a ECR.
 - [ ] **Equipo infra:** relajar la validación `/32` de `ssh_allowed_cidr` para permitir `0.0.0.0/0` (decisión 2).
-- [ ] **Equipo infra:** definir el bucket real del backend (`backend.hcl` tiene un placeholder).
+- [x] **Equipo infra:** definir el bucket real del backend (`backend.hcl` tiene un placeholder).
 - [ ] **Equipo infra:** sincronizar `terraform.tfvars.example` con `variables.tf` (menciona `alert_email`, `budget_limit_usd`, etc., que aún no existen) y eliminar los dos archivos basura en `terraform/` (comandos pegados como archivos: `budgets describe-budgets…` y `cloudtrail validate-logs ✓`).
-- [ ] **Equipo app:** `Dockerfile` en `app/`, app escuchando en 8080 con `/health`.
+- [x] **Equipo app:** `Dockerfile` en `app/`, app escuchando en 8080 con `/health`.
 - [ ] **Equipo config:** playbook de entrada `ansible/playbook.yml` (o `site.yml`) que instale docker, awscli, nginx y cree `/etc/nginx/conf.d/bluegreen.conf` con `proxy_pass http://127.0.0.1:8081;` (formato que `app.yml` espera para el switch).
 - [ ] **Verificar** si el `GITHUB_TOKEN` puede hacer `gh variable set VM_PUBLIC_IP` tras el apply; si no, usar el fallback manual documentado.
 

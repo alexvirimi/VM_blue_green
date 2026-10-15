@@ -1,29 +1,6 @@
-# =============================================================================
 # CI/CD de la APLICACION - despliegue blue/green en la VM de AWS
-# =============================================================================
 # Filtro de paths (req. 4 del taller): este workflow SOLO se ejecuta cuando
 # cambian archivos de la aplicacion (app/**) o este mismo workflow.
-#
-#   PR a main         -> build de la imagen + analisis con Trivy (no publica).
-#   Push a main       -> build + Trivy + push a ECR (OIDC) + despliegue
-#                        blue/green por SSH + health check + cambio de Nginx.
-#   Ejecucion manual  -> action=deploy   : igual que un push a main.
-#                        action=rollback : reapunta Nginx al color anterior.
-#
-# Convenciones en la VM (coordinadas con los equipos de app y config, ver
-# README seccion "Estrategia blue/green"):
-#   * Contenedores:  app-blue (puerto 8081) y app-green (puerto 8082).
-#   * La app escucha en el puerto 8080 DENTRO del contenedor y expone /health.
-#   * Color activo:  archivo /opt/bluegreen/current_color ("blue" o "green").
-#   * Nginx:         /etc/nginx/conf.d/bluegreen.conf con una linea
-#                    "proxy_pass http://127.0.0.1:808x;".
-#   * Docker y awscli los instala el playbook de Ansible (config.yml).
-#
-# Seguridad (req. 7 y 8 del taller):
-#   * GITHUB_TOKEN sin permisos por defecto; cada job declara el minimo.
-#   * Acciones de terceros pinadas a SHA de commit (inmutable).
-#   * Sin credenciales en el repo: AWS via OIDC, clave SSH via GitHub Secret.
-# =============================================================================
 
 name: App CI/CD (Blue-Green)
 

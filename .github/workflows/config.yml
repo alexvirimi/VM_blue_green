@@ -1,22 +1,6 @@
-# =============================================================================
 # CI/CD de CONFIGURACION - Ansible y Nginx
-# =============================================================================
 # Filtro de paths (req. 4 del taller): este workflow SOLO se ejecuta cuando
 # cambian archivos de configuracion (ansible/**) o este mismo workflow.
-#
-#   PR a main        -> yamllint y ansible-lint (sin credenciales).
-#   Push a main      -> validaciones + aplicar el playbook contra la VM via
-#                      SSH (clave almacenada como GitHub Secret, req. 8).
-#   Ejecucion manual -> igual que un push a main.
-#
-# Convenciones (coordinar con el equipo de config; ver README):
-#   * Playbook de entrada: ansible/playbook.yml (o ansible/site.yml).
-#   * Inventario: ansible/inventory.ini; si no existe, se genera uno temporal
-#     con la IP de la variable VM_PUBLIC_IP (grupo [app]).
-#   * Requisitos de Galaxy: ansible/requirements.yml (opcional).
-#   * El playbook debe instalar docker, awscli y nginx, y crear
-#     /etc/nginx/conf.d/bluegreen.conf (convencion usada por app.yml).
-# =============================================================================
 
 name: Config CI/CD (Ansible)
 

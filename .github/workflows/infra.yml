@@ -1,26 +1,6 @@
-# =============================================================================
 # CI/CD de INFRAESTRUCTURA - Terraform (IaC)
-# =============================================================================
 # Filtro de paths (req. 4 del taller): este workflow SOLO se ejecuta cuando
 # cambian archivos de infraestructura (terraform/**) o este mismo workflow.
-#
-#   PR a main        -> terraform fmt -check, terraform validate y Checkov.
-#                       Sin credenciales AWS: el rol OIDC del proyecto solo
-#                       confia en la rama main (politica de confianza estricta
-#                       definida por el equipo de infraestructura), por lo que
-#                       en un PR no se puede consultar el estado remoto.
-#   Push a main      -> lo mismo + terraform plan + terraform apply
-#                       (auto-aplicado con rol OIDC, req. 6 del taller).
-#   Ejecucion manual -> igual que un push a main (ejecutar DESDE main);
-#                       con skip_apply=true solo se ejecuta plan.
-#
-# Notas:
-#   * El backend "s3" esta vacio en versions.tf: la configuracion del backend
-#     (bucket, key, region, use_lockfile) se pasa en el init desde variables
-#     del repositorio (nunca credenciales: AWS via OIDC).
-#   * terraform.tfvars se genera en CI desde variables del repositorio y no
-#     se versiona (ver .gitignore).
-# =============================================================================
 
 name: Infra CI/CD (Terraform)
 
@@ -279,7 +259,7 @@ jobs:
       - name: terraform init (backend S3 con lockfile)
         env:
           TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
-          TF_STATE_KEY: ${{ vars.TF_STATE_KEY }} #TODO: ENCONTRAR LA MALDITA KEY
+          TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
         run: |
           set -euo pipefail
           terraform init -input=false -lock-timeout=5m \
