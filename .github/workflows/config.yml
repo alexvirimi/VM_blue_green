@@ -103,7 +103,7 @@ jobs:
         if: hashFiles('ansible/**') != ''
         run: |
           if [ -f ansible/requirements.yml ]; then
-            ansible-galaxy install -r ansible/requirements.yml
+            ansible-galaxy collection install -r ansible/requirements.yml
           fi
 
       - name: Preparar clave SSH (GitHub Secret, req. 8)
@@ -125,24 +125,34 @@ jobs:
           set -euo pipefail
           if [ -f ansible/playbook.yml ]; then
             PLAYBOOK="ansible/playbook.yml"
+          elif [ -f ansible/playbooks/setup.yml ]; then
+            PLAYBOOK="ansible/playbooks/setup.yml"
           elif [ -f ansible/site.yml ]; then
             PLAYBOOK="ansible/site.yml"
           else
-            echo "::error::No se encontro ansible/playbook.yml (ni ansible/site.yml). El equipo de configuracion debe crear el playbook de entrada."
+            echo "::error::No se encontro playbook.yml (ni site.yml). El equipo de configuracion debe crear el playbook de entrada."
             exit 1
           fi
-          if [ -f ansible/inventory.ini ]; then
-            INVENTORY="ansible/inventory.ini"
+          if [ -f inventory/hosts.yml ]; then
+            INVENTORY="inventory/hosts.yml"
           else
-            printf '[app]\nvm ansible_host=%s\n' "$VM_PUBLIC_IP" > inventory.ci.ini
-            INVENTORY="inventory.ci.ini"
-            echo "::notice::No existe ansible/inventory.ini; se genero uno temporal con la IP de VM_PUBLIC_IP."
+            INVENTORY="inventory/ci.yml"   # dentro de inventory/ para cargar group_vars
+            cat > "$INVENTORY" <<EOF
+          all:
+            hosts:
+              vm1:
+                ansible_host: ${VM_PUBLIC_IP}
+                ansible_user: ubuntu
+                ansible_ssh_private_key_file: ~/.ssh/vm_key
+          EOF
+            echo "::notice::Inventario temporal generado con VM_PUBLIC_IP."
           fi
           echo "playbook=$PLAYBOOK" >> "$GITHUB_OUTPUT"
-          echo "inventory=$INVENTORY" >> "$GITHUB_OUTPUT"
+          echo "inventory=$INVENTORY" >> "$GITHUB_OUTPUT"      
 
       - name: Ejecutar playbook contra la VM
         if: hashFiles('ansible/**') != ''
+        working-directory: ansible
         env:
           PLAYBOOK: ${{ steps.sel.outputs.playbook }}
           INVENTORY: ${{ steps.sel.outputs.inventory }}
@@ -154,7 +164,8 @@ jobs:
             --user "$SSH_USER" \
             --private-key ~/.ssh/vm_key \
             --ssh-common-args="-o StrictHostKeyChecking=accept-new" \
-            --extra-vars "vm_public_ip=$VM_PUBLIC_IP"
+            --extra-vars "vm_public_ip=$VM_PUBLIC_IP" 
+        # --extra-vars no se utiliza en ningún rol, se puede quitar, sin embargo, en caso de hacerse uso en el futuro se deja
 
       # No bloquea el pipeline: en el primer arranque todavia no hay aplicacion
       # desplegada; el health check es informativo hasta que app.yml despliegue.
