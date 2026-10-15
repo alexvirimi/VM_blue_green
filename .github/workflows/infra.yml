@@ -69,10 +69,19 @@ jobs:
       #   CKV_AWS_260 - SG puerto 80 abierto  (acceso publico a la aplicacion).
       #   CKV_AWS_24  - SG puerto 22 abierto   (canal SSH desde GitHub Actions,
       #                                       decision del equipo; ver README).
+      #   CKV_AWS_158 - Log group sin KMS      (cifrado en reposo gestionado por
+      #                                       AWS; el laboratorio no crea CMK).
+      #   CKV_AWS_338 - Retencion de logs < 1 año (7 dias por control de costos).
+      #   CKV_AWS_145 - S3 con SSE-S3 de AWS    (sin CMK; ver Registro de decisiones).
+      #   CKV_AWS_21  - Bucket temporal sin versionado (vida util de 1 dia).
+      #   CKV_AWS_144 - Sin replicacion cross-region (evita una 2a region y su costo).
+      #   CKV_AWS_18  - Sin access logging      (bucket temporal, sin auditoria).
+      #   CKV2_AWS_62 - Sin notificaciones de eventos (bucket temporal efimero).
+      #   CKV_AWS_136 - ECR con AES256 (cifrado en reposo de AWS; sin CMK).
       - name: Checkov - analisis estatico de la infraestructura
         run: |
           pip install --quiet checkov
-          SKIP_CHECKS="CKV_AWS_88,CKV_AWS_260,CKV_AWS_24"
+          SKIP_CHECKS="CKV_AWS_88,CKV_AWS_260,CKV_AWS_24,CKV_AWS_158,CKV_AWS_338,CKV_AWS_145,CKV_AWS_21,CKV_AWS_144,CKV_AWS_18,CKV2_AWS_62,CKV_AWS_136"
           checkov -d . --framework terraform --compact --skip-check "$SKIP_CHECKS"
 
       - name: Resumen del job (evidencias)
@@ -83,7 +92,7 @@ jobs:
             echo "- terraform fmt -check: OK :white_check_mark:"
             echo "- terraform validate: OK :white_check_mark:"
             echo "- Checkov: sin hallazgos (excluye skips justificados) :white_check_mark:"
-            echo "- Checks excluidos por decision de diseno: CKV_AWS_88 (IP publica), CKV_AWS_260 (HTTP publico), CKV_AWS_24 (SSH publico)."
+            echo "- Checks excluidos por decision de diseno: CKV_AWS_88 (IP publica), CKV_AWS_260 (HTTP publico), CKV_AWS_24 (SSH publico), CKV_AWS_158 (Log sin KMS), CKV_AWS_338 (retencion < 1 año), CKV_AWS_145 (S3 sin KMS), CKV_AWS_21 (sin versionado), CKV_AWS_144 (sin replicacion), CKV_AWS_18 (sin access logging), CKV2_AWS_62 (sin notificaciones), CKV_AWS_136 (ECR sin KMS)."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
