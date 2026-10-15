@@ -164,3 +164,9 @@ docker ps
 cat /opt/bluegreen/active_color /opt/bluegreen/previous_color
 sudo nginx -t
 ```
+
+## Decisiones
+ 
+- **Roles en lugar de un playbook plano**: `common`, `nginx` y `bluegreen` se reutilizan entre playbooks; el cambio de Nginx está escrito en un único lugar (`switch.yml`).
+- **Estado en archivos de la VM**: el color activo y el anterior se guardan en `/opt/bluegreen`, sin base de datos externa.
+- **`reload` en lugar de `restart`**: Nginx recarga la configuración sin cortar conexiones activas.
