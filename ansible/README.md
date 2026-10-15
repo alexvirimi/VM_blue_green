@@ -104,8 +104,9 @@ sudo apt install -y nginx
 ```
 
 ### 6. Probar el mecanismo blue/green con contenedores demo
-Antes de utilizar la aplicación real, para estar seguro de 
-Sustituye a la aplicación real mientras no esté disponible en ECR. Levanta `app-blue` y `app-green` con una imagen pública y deja Nginx apuntando a blue.
+
+Antes de utilizar la aplicación real, para estar seguro de que todo funciona o en caso de no tener disponible ECR podemos realizar un demo.
+Este demo sustituye a la aplicación real mientras no esté disponible en ECR. Levanta `app-blue` y `app-green` con una imagen pública y deja Nginx apuntando a blue.
  
 ```bash
 ansible-playbook -i inventory/hosts.yml playbooks/demo.yml
