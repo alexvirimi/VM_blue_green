@@ -130,7 +130,7 @@ jobs:
           elif [ -f ansible/site.yml ]; then
             PLAYBOOK="ansible/site.yml"
           else
-            echo "::error::No se encontro playbook.yml (ni site.yml). El equipo de configuracion debe crear el playbook de entrada."
+            echo "::error::No se encontro playbook.yml, site.yml, ni playbooks/setup.yml. El equipo de configuracion debe crear el playbook de entrada."
             exit 1
           fi
           if [ -f ansible/inventory/hosts.yml ]; then
