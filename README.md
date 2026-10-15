@@ -4,8 +4,8 @@
 
 Una empresa quiere disminuir el tiempo de indisponibilidad al actualizar una aplicación  contenerizada.
 
-**Plataforma:** AWS.
-**Herramientas:** Terraform, Ansible y Nginx.
+- **Plataforma:** AWS.
+- **Herramientas:** Terraform, Ansible y Nginx.
 
 ## Actividades mínimas
 
