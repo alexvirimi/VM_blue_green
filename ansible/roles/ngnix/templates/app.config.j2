@@ -1,0 +1,27 @@
+{% if active_color == 'none' %}
+server {
+    listen 80 default_server;
+    server_name _;
+    location / { return 503 "Sin versión activa. Ejecuta el primer deploy.\n"; }
+}
+{% else %}
+upstream app_active {
+    server 127.0.0.1:{{ active_port }};
+}
+
+server {
+    listen 80 default_server;
+    server_name _;
+
+    add_header X-Active-Color {{ active_color }} always;
+
+    location / {
+        proxy_pass http://app_active;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 30s;
+    }
+}
+{% endif %}

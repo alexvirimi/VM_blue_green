@@ -1,0 +1,77 @@
+---
+- name: Validar variables obligatorias
+  ansible.builtin.assert:
+    that:
+      - ecr_repository_url | length > 0
+      - image_tag | length > 0
+    fail_msg: "Variables faltantes, pasar -e ecr_repository_url=... -e image_tag=..."
+
+# Parte 1 de Desplegar la nueva versión en el ambiente inactivo y verificar el endpoint de salud.
+- name: Leer estado actual
+  ansible.builtin.include_tasks: read_state.yml
+
+- name: Definir color inactivo (destino del deploy)
+  ansible.builtin.set_fact:
+    target_color: "{{ 'green' if active_color == 'blue' else 'blue' }}"
+    registry: "{{ ecr_repository_url.split('/')[0] }}"
+
+- name: "Estado: activo={{ active_color }}, desplegando en {{ target_color }}"
+  ansible.builtin.debug:
+    msg: "Imagen {{ ecr_repository_url }}:{{ image_tag }}"
+
+- name: Login a ECR con el rol de la instancia
+  ansible.builtin.shell: |
+    set -o pipefail
+    aws ecr get-login-password --region {{ aws_region }} \
+      | docker login --username AWS --password-stdin {{ registry }}
+  args:
+    executable: /bin/bash
+  changed_when: false
+  no_log: true
+  become: true
+
+# Parte 2 de Desplegar la nueva versión en el ambiente inactivo y verificar el endpoint de salud.
+- name: Desplegar y verificar en el ambiente inactivo
+  block:
+    - name: Levantar contenedor {{ target_color }}
+      community.docker.docker_container:
+        name: "app-{{ target_color }}"
+        image: "{{ ecr_repository_url }}:{{ image_tag }}"
+        pull: always
+        state: started
+        recreate: true
+        restart_policy: unless-stopped
+        ports:
+          - "127.0.0.1:{{ colors[target_color] }}:{{ app_container_port }}"
+        env:
+          APP_COLOR: "{{ target_color }}"
+          APP_VERSION: "{{ image_tag }}"
+        memory: "{{ container_memory }}"
+        cpus: "{{ container_cpus }}"
+      become: true
+
+    - name: Health check del ambiente nuevo
+      ansible.builtin.include_tasks: health_check.yml
+      vars:
+        check_port: "{{ colors[target_color] }}"
+
+  # Rescue blocks specify tasks to run when an earlier task in a block fails.
+  rescue:
+    - name: Apagar el contenedor fallido
+      community.docker.docker_container:
+        name: "app-{{ target_color }}"
+        state: stopped
+      become: true
+      failed_when: false
+
+    - name: Abortar despliegue
+      ansible.builtin.fail:
+        msg: >-
+          Health check falló en {{ target_color }}. Tráfico sigue en {{ active_color }}.
+
+- name: Cambiar tráfico al nuevo color
+  ansible.builtin.include_tasks: switch.yml
+
+- name: Resultado
+  ansible.builtin.debug:
+    msg: "Activo: {{ target_color }} (v{{ image_tag }}). Rollback disponible hacia {{ active_color }}."

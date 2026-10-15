@@ -1,0 +1,8 @@
+---
+- name: Desplegar una nueva versión en el ambiente inactivo
+  hosts: all
+  gather_facts: false
+  roles:
+    - role: bluegreen
+      vars:
+        bluegreen_action: deploy

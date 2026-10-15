@@ -19,3 +19,7 @@ terraform.tfvars
 # Evidencia generada por scripts/collect-evidence.sh (trae ID de cuenta y ARNs)
 docs/evidencias/
 EOF
+
+# Ansible
+ansible/inventory/hosts.yml
+*.pem

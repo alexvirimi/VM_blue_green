@@ -1,0 +1,23 @@
+---
+- name: Instalar paquetes base (Docker, AWS CLI, SDK de Docker para Ansible)
+  ansible.builtin.apt:
+    name: [docker.io, awscli, python3-docker, curl]
+    state: present
+    update_cache: true
+    # Actualizar caché solo si han transcurrido más de 3600 seg (1h)
+    cache_valid_time: 3600
+  become: true
+
+- name: Docker habilitado e iniciado
+  ansible.builtin.systemd:
+    name: docker
+    enabled: true
+    state: started
+  become: true
+
+- name: Directorio de estado blue/green
+  ansible.builtin.file:
+    path: "{{ state_dir }}"
+    state: directory
+    mode: "0755"
+  become: true
