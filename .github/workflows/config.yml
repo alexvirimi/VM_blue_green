@@ -152,7 +152,6 @@ jobs:
 
       - name: Ejecutar playbook contra la VM
         if: hashFiles('ansible/**') != ''
-        working-directory: ansible
         env:
           PLAYBOOK: ${{ steps.sel.outputs.playbook }}
           INVENTORY: ${{ steps.sel.outputs.inventory }}

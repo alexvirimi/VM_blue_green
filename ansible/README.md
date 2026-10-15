@@ -9,8 +9,8 @@ ansible/
 ├── .ansible-lint
 ├── inventory/
 │   └── hosts.yml.example         # copiar a hosts.yml y cambiar las variables
-├── group_vars/
-│   └── all.yml                   # variables (puertos, límites, health check)
+│   └── group_vars/
+│       └── all.yml                   # variables (puertos, límites, health check)
 ├── playbooks/
 │   ├── setup.yml                 # instala Docker y Nginx
 │   ├── demo.yml                  # prueba con contenedores sustitutos
