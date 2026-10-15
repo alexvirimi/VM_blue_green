@@ -28,8 +28,8 @@
   ansible.builtin.command: nginx -t
   changed_when: false
   become: true
-  register: _nginx_test
-  failed_when: _nginx_test.rc != 0
+  register: bluegreen_nginx_test
+  failed_when: bluegreen_nginx_test.rc != 0
 
 - name: Recargar Nginx (sin cortar conexiones)
   ansible.builtin.systemd:
@@ -57,7 +57,7 @@
     url: "http://127.0.0.1{{ health_path }}"
     status_code: 200
     return_content: false
-  register: _via_nginx
-  until: _via_nginx.status == 200
+  register: bluegreen_via_nginx
+  until: bluegreen_via_nginx.status == 200
   retries: 5
   delay: 1
