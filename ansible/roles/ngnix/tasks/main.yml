@@ -14,7 +14,7 @@
 
 - name: Configuración inicial (sin versión activa -> 503 hasta el primer deploy)
   ansible.builtin.template:
-    src: app.conf.j2
+    src: app.config.j2
     dest: /etc/nginx/conf.d/app.conf
     mode: "0644"
     force: false

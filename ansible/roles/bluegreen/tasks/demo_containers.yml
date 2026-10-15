@@ -1,0 +1,26 @@
+# Sirve para probar que Nginx y Docker están funcionando en la VM, sin necesidad de un ECR ni un despliegue real
+# Se levanta un contenedor demo para cada color, y se hace health check de cada uno
+# Se sabe si health_check.yml funciona porque el contenedor demo responde 200 OK en /health
+---
+- name: Levantar contenedores demo blue y green
+  community.docker.docker_container:
+    name: "app-{{ item.key }}"
+    image: "{{ demo_image }}"
+    pull: missing
+    state: started
+    restart_policy: unless-stopped
+    command:
+      - "-listen=:{{ app_container_port }}"
+      - "-text= Hola mundo desde {{ item.key | upper }}"
+    ports:
+      - "127.0.0.1:{{ item.value }}:{{ app_container_port }}"
+    memory: "{{ container_memory }}"
+    cpus: "{{ container_cpus }}"
+  loop: "{{ colors | dict2items }}"
+  become: true
+
+- name: Health check de cada color
+  ansible.builtin.include_tasks: health_check.yml
+  vars:
+    check_port: "{{ item.value }}"
+  loop: "{{ colors | dict2items }}"

@@ -1,0 +1,3 @@
+---
+- name: Ejecutar acción solicitada
+  ansible.builtin.include_tasks: "{{ bluegreen_action | default('deploy') }}.yml"
