@@ -63,11 +63,10 @@ VM_blue_green/
 ├── app/                     # Aplicación contenerizada (equipo app)
 ├── ansible/                 # Playbooks de configuración (equipo config)
 ├── terraform/               # Infraestructura como código (equipo infra)
-├── .github/workflows/
-│   ├── app.yml              # CI/CD de la aplicación: build, Trivy, ECR, blue/green, rollback
-│   ├── infra.yml            # CI/CD de infraestructura: fmt/validate, Checkov, plan, apply
-│   └── config.yml           # CI/CD de configuración: lint y aplicación del playbook
-└── docs/                    # Evidencias de la entrega (fase 2)
+└── .github/workflows/
+    ├── app.yml              # CI/CD de la aplicación: build, Trivy, ECR, blue/green, rollback
+    ├── infra.yml            # CI/CD de infraestructura: fmt/validate, Checkov, plan, apply
+    └── config.yml           # CI/CD de configuración: lint y aplicación del playbook
 ```
 
 ## Workflows con filtros de paths
