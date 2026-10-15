@@ -6,10 +6,10 @@ name: Config CI/CD (Ansible)
 
 on:
   push:
-    branches: [main, fix-ansible]
+    branches: [main]
     paths: ["ansible/**", ".github/workflows/config.yml"]
   pull_request:
-    branches: [main, fix-ansible]
+    branches: [main]
     paths: ["ansible/**", ".github/workflows/config.yml"]
   workflow_dispatch:
 
