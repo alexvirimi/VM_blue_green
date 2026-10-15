@@ -72,7 +72,6 @@ jobs:
       - name: Checkov - analisis estatico de la infraestructura
         run: |
           pip install --quiet checkov
-          SKIP_CHECKS="CKV_AWS_88,CKV_AWS_260,CKV_AWS_24"
           checkov -d . --framework terraform --compact --skip-check "$SKIP_CHECKS"
 
       - name: Resumen del job (evidencias)
@@ -83,7 +82,7 @@ jobs:
             echo "- terraform fmt -check: OK :white_check_mark:"
             echo "- terraform validate: OK :white_check_mark:"
             echo "- Checkov: sin hallazgos (excluye skips justificados) :white_check_mark:"
-            echo "- Checks excluidos por decision de diseno: CKV_AWS_88 (IP publica), CKV_AWS_260 (HTTP publico), CKV_AWS_24 (SSH publico)."
+            echo "- Checks excluidos por decision de diseno: CKV_AWS_88 (IP publica), CKV_AWS_260 (HTTP publico)."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
@@ -141,7 +140,6 @@ jobs:
       - name: Generar terraform.tfvars desde variables del repositorio
         env:
           EC2_KEY_NAME: ${{ vars.EC2_KEY_NAME }}
-          SSH_ALLOWED_CIDR: ${{ vars.SSH_ALLOWED_CIDR }}
           OIDC_PROVIDER_ARN: ${{ vars.OIDC_PROVIDER_ARN }}
         run: |
           set -euo pipefail
@@ -155,7 +153,6 @@ jobs:
             printf '%s = "%s"\n' "$tf_var" "$valor" >> terraform.tfvars
           }
           escribir key_name "$EC2_KEY_NAME" EC2_KEY_NAME
-          escribir ssh_allowed_cidr "$SSH_ALLOWED_CIDR" SSH_ALLOWED_CIDR
           # Opcional: solo si el proveedor OIDC ya existe en la cuenta AWS.
           if [ -n "$OIDC_PROVIDER_ARN" ]; then
             printf 'github_oidc_provider_arn = "%s"\n' "$OIDC_PROVIDER_ARN" >> terraform.tfvars
@@ -235,7 +232,6 @@ jobs:
       - name: Generar terraform.tfvars desde variables del repositorio
         env:
           EC2_KEY_NAME: ${{ vars.EC2_KEY_NAME }}
-          SSH_ALLOWED_CIDR: ${{ vars.SSH_ALLOWED_CIDR }}
           OIDC_PROVIDER_ARN: ${{ vars.OIDC_PROVIDER_ARN }}
         run: |
           set -euo pipefail
@@ -249,7 +245,6 @@ jobs:
             printf '%s = "%s"\n' "$tf_var" "$valor" >> terraform.tfvars
           }
           escribir key_name "$EC2_KEY_NAME" EC2_KEY_NAME
-          escribir ssh_allowed_cidr "$SSH_ALLOWED_CIDR" SSH_ALLOWED_CIDR
           if [ -n "$OIDC_PROVIDER_ARN" ]; then
             printf 'github_oidc_provider_arn = "%s"\n' "$OIDC_PROVIDER_ARN" >> terraform.tfvars
           fi
