@@ -64,128 +64,102 @@ jobs:
   # Aplicacion del playbook: solo en push a main (o ejecucion manual).
   # ---------------------------------------------------------------------------
   apply-config:
-    name: Aplicar configuracion con Ansible
-    needs: lint
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    concurrency:
-      group: ansible-apply
-      cancel-in-progress: false
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
+      name: Aplicar configuracion con Ansible (SSM)
+      needs: lint
+      if: github.event_name != 'pull_request'
+      runs-on: ubuntu-latest
+      timeout-minutes: 20
+      permissions:
+        contents: read
+        id-token: write # OIDC: asumir el rol de AWS sin claves almacenadas.
+      concurrency:
+        group: bluegreen-deploy
+        cancel-in-progress: false
+      env:
+        AWS_REGION: ${{ vars.AWS_REGION }}
+      steps:
+        - name: Checkout
+          uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+          with:
+            persist-credentials: false
 
-      - name: Aviso si aun no hay archivos de configuracion
-        if: hashFiles('ansible/**') == ''
-        run: echo "::warning::No hay archivos en ansible/ todavia; no se aplica configuracion en este run."
+        - name: Verificar variables requeridas del repositorio
+          env:
+            ECR_ROLE_ARN: ${{ vars.ECR_ROLE_ARN }}
+            VM_INSTANCE_ID: ${{ vars.VM_INSTANCE_ID }}
+            SSM_BUCKET: ${{ vars.ANSIBLE_SSM_BUCKET }}
+          run: |
+            set -euo pipefail
+            faltan=""
+            [ -n "$AWS_REGION" ]     || faltan="$faltan AWS_REGION"
+            [ -n "$ECR_ROLE_ARN" ]   || faltan="$faltan ECR_ROLE_ARN"
+            [ -n "$VM_INSTANCE_ID" ] || faltan="$faltan VM_INSTANCE_ID"
+            [ -n "$SSM_BUCKET" ]     || faltan="$faltan ANSIBLE_SSM_BUCKET"
+            if [ -n "$faltan" ]; then
+              echo "::error::Faltan variables del repositorio:$faltan."
+              exit 1
+            fi
 
-      - name: Verificar variables requeridas del repositorio
-        if: hashFiles('ansible/**') != ''
-        env:
-          VM_PUBLIC_IP: ${{ vars.VM_PUBLIC_IP }}
-        run: |
-          set -euo pipefail
-          if [ -z "$VM_PUBLIC_IP" ]; then
-            echo "::error::Falta la variable del repositorio VM_PUBLIC_IP (Settings > Secrets and variables > Actions > Variables)."
-            exit 1
-          fi
+        - name: Configurar credenciales AWS (OIDC)
+          uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+          with:
+            role-to-assume: ${{ vars.ECR_ROLE_ARN }}
+            aws-region: ${{ env.AWS_REGION }}
 
-      - name: Instalar Ansible
-        if: hashFiles('ansible/**') != ''
-        run: pip install --quiet ansible-core
+        - name: Instalar plugin de Session Manager
+          run: |
+            set -euo pipefail
+            curl -fsSL "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" -o /tmp/ssm-plugin.deb
+            sudo dpkg -i /tmp/ssm-plugin.deb
+            session-manager-plugin --version
 
-      - name: Instalar dependencias de Galaxy (si existen)
-        if: hashFiles('ansible/**') != ''
-        run: |
-          if [ -f ansible/requirements.yml ]; then
+        - name: Instalar Ansible y dependencias
+          run: |
+            set -euo pipefail
+            pip install --quiet ansible-core boto3 botocore
             ansible-galaxy collection install -r ansible/requirements.yml
-          fi
 
-      - name: Preparar clave SSH (GitHub Secret, req. 8)
-        if: hashFiles('ansible/**') != ''
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-        run: |
-          set -euo pipefail
-          mkdir -p ~/.ssh
-          install -m 600 /dev/null ~/.ssh/vm_key
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/vm_key
+        - name: Crear inventario SSM
+          env:
+            VM_INSTANCE_ID: ${{ vars.VM_INSTANCE_ID }}
+            SSM_BUCKET: ${{ vars.ANSIBLE_SSM_BUCKET }}
+          run: |
+            set -euo pipefail
+            cat > ansible/inventory/ci.yml <<EOF
+            all:
+              hosts:
+                vm1:
+                  ansible_connection: amazon.aws.aws_ssm
+                  ansible_host: ${VM_INSTANCE_ID}
+                  ansible_aws_ssm_region: ${AWS_REGION}
+                  ansible_aws_ssm_bucket_name: ${SSM_BUCKET}
+                  ansible_python_interpreter: /usr/bin/python3
+            EOF
 
-      - name: Seleccionar playbook e inventario
-        if: hashFiles('ansible/**') != ''
-        id: sel
-        env:
-          VM_PUBLIC_IP: ${{ vars.VM_PUBLIC_IP }}
-        run: |
-          set -euo pipefail
-          if [ -f ansible/playbook.yml ]; then
-            PLAYBOOK="ansible/playbook.yml"
-          elif [ -f ansible/playbooks/setup.yml ]; then
-            PLAYBOOK="ansible/playbooks/setup.yml"
-          elif [ -f ansible/site.yml ]; then
-            PLAYBOOK="ansible/site.yml"
-          else
-            echo "::error::No se encontro playbook.yml, site.yml, ni playbooks/setup.yml. El equipo de configuracion debe crear el playbook de entrada."
-            exit 1
-          fi
-          if [ -f ansible/inventory/hosts.yml ]; then
-            INVENTORY="ansible/inventory/hosts.yml"
-          else
-            INVENTORY="ansible/inventory/ci.yml"   # dentro de inventory/ para cargar group_vars
-            cat > "$INVENTORY" <<EOF
-          all:
-            hosts:
-              vm1:
-                ansible_host: ${VM_PUBLIC_IP}
-                ansible_user: ubuntu
-                ansible_ssh_private_key_file: ~/.ssh/vm_key
-          EOF
-            echo "::notice::Inventario temporal generado con VM_PUBLIC_IP."
-          fi
-          echo "playbook=$PLAYBOOK" >> "$GITHUB_OUTPUT"
-          echo "inventory=$INVENTORY" >> "$GITHUB_OUTPUT"      
+        - name: Ejecutar playbook contra la VM
+          env:
+            ANSIBLE_CONFIG: ansible/ansible.cfg
+            ANSIBLE_ROLES_PATH: ${{ github.workspace }}/ansible/roles
+          run: |
+            set -euo pipefail
+            ansible-playbook -i ansible/inventory/ci.yml ansible/playbooks/setup.yml
 
-      - name: Ejecutar playbook contra la VM
-        if: hashFiles('ansible/**') != ''
-        env:
-          ANSIBLE_CONFIG: ansible/ansible.cfg
-          PLAYBOOK: ${{ steps.sel.outputs.playbook }}
-          INVENTORY: ${{ steps.sel.outputs.inventory }}
-          VM_PUBLIC_IP: ${{ vars.VM_PUBLIC_IP }}
-          SSH_USER: ${{ vars.VM_SSH_USER || 'ubuntu' }}
-        run: |
-          set -euo pipefail
-          ansible-playbook -i "$INVENTORY" "$PLAYBOOK" \
-            --user "$SSH_USER" \
-            --private-key ~/.ssh/vm_key \
-            --ssh-common-args="-o StrictHostKeyChecking=accept-new" \
-            --extra-vars "vm_public_ip=$VM_PUBLIC_IP" 
-        # --extra-vars no se utiliza en ningún rol, se puede quitar, sin embargo, en caso de hacerse uso en el futuro se deja
+        # No bloquea: en el primer arranque todavia no hay aplicacion desplegada.
+        - name: Health check (informativo)
+          continue-on-error: true
+          env:
+            VM_INSTANCE_ID: ${{ vars.VM_INSTANCE_ID }}
+          run: |
+            IP="$(aws ec2 describe-instances --instance-ids "$VM_INSTANCE_ID" \
+              --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)"
+            curl -fsS --retry 3 --retry-delay 3 --retry-all-errors "http://${IP}/health" \
+              || echo "::warning::/health no responde todavia (normal si la aplicacion aun no se despliega)."
 
-      # No bloquea el pipeline: en el primer arranque todavia no hay aplicacion
-      # desplegada; el health check es informativo hasta que app.yml despliegue.
-      - name: Health check (informativo)
-        if: hashFiles('ansible/**') != ''
-        continue-on-error: true
-        env:
-          VM_PUBLIC_IP: ${{ vars.VM_PUBLIC_IP }}
-        run: |
-          curl -fsS --retry 3 --retry-delay 3 --retry-all-errors "http://${VM_PUBLIC_IP}/health" \
-            || echo "::warning::/health no responde todavia (normal si la aplicacion aun no se despliega)."
-
-      - name: Resumen del job (evidencias)
-        if: hashFiles('ansible/**') != ''
-        env:
-          PLAYBOOK: ${{ steps.sel.outputs.playbook }}
-        run: |
-          {
-            echo "### Config - Configuracion aplicada"
-            echo ""
-            echo "- Playbook ejecutado: \`${PLAYBOOK}\`"
-            echo "- Health check informativo: ver logs"
-          } >> "$GITHUB_STEP_SUMMARY"
+        - name: Resumen del job (evidencias)
+          run: |
+            {
+              echo "### Config - Configuracion aplicada (via SSM)"
+              echo ""
+              echo "- Playbook ejecutado: \`ansible/playbooks/setup.yml\`"
+              echo "- Conexion: AWS Systems Manager, sin SSH"
+            } >> "$GITHUB_STEP_SUMMARY"
